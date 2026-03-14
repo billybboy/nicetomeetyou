@@ -12,3 +12,14 @@ dependencies = [
     "psycopg[binary]>=3.3.3",
     "requests>=2.32.5",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+    "pytest-django>=4.11.1",
+]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "nba_news.settings"
+python_files = ["test_*.py", "*_tests.py"]
+testpaths = ["news/tests"]
