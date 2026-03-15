@@ -4,24 +4,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Iterable
-from urllib.parse import urljoin
+from time import sleep
 
 import requests
 from bs4 import BeautifulSoup, Tag
+from django.core.cache import cache
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
-from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from news.models import News, NewsTag
 
 BASE_URL = "http://tw-nba.udn.com/nba/index"
 DEFAULT_TIMEOUT = 15
+DEFAULT_INTERVAL = 0
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
 )
+NEWS_LIST_CACHE_KEY = "news:list"
 
 
 @dataclass
@@ -235,13 +236,17 @@ class Command(BaseCommand):
             default=0,
             help="Limit the number of scraped items. 0 means no limit.",
         )
+        parser.add_argument(
+            "--interval",
+            type=int,
+            default=DEFAULT_INTERVAL,
+            help="Repeat the scrape every N seconds. 0 means run once.",
+        )
 
-    def handle(self, *args, **options) -> None:
-        """Scrape the list page, hydrate detail pages, and upsert database rows."""
-
-        url = options["url"]
-        timeout = options["timeout"]
-        limit = options["limit"]
+    def scrape_once(
+        self, *, url: str, timeout: int, limit: int
+    ) -> tuple[int, int, int]:
+        """Scrape the list page once, hydrate detail pages, and upsert database rows."""
 
         try:
             html = fetch_html(url, timeout=timeout)
@@ -257,6 +262,7 @@ class Command(BaseCommand):
         created_count = 0
         updated_count = 0
         error_count = 0
+        changed = False
 
         for item in items:
             try:
@@ -278,13 +284,43 @@ class Command(BaseCommand):
 
             if created:
                 created_count += 1
+                changed = True
                 self.stdout.write(f"Created: {news.title}")
             else:
                 updated_count += 1
+                changed = True
                 self.stdout.write(f"Updated: {news.title}")
 
-        self.stdout.write(
-            self.style.SUCCESS(
-                f"Scrape complete. created={created_count} updated={updated_count} errors={error_count}"
+        if changed:
+            cache.delete(NEWS_LIST_CACHE_KEY)
+
+        return created_count, updated_count, error_count
+
+    def handle(self, *args, **options) -> None:
+        """Run the scraper once or repeatedly with a sleep interval."""
+
+        url = options["url"]
+        timeout = options["timeout"]
+        limit = options["limit"]
+        interval = options["interval"]
+
+        while True:
+            created_count, updated_count, error_count = self.scrape_once(
+                url=url,
+                timeout=timeout,
+                limit=limit,
             )
-        )
+
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"Scrape complete. created={created_count} updated={updated_count} errors={error_count}"
+                )
+            )
+
+            if interval <= 0:
+                break
+
+            self.stdout.write(
+                f"Sleeping for {interval} seconds before the next scrape cycle."
+            )
+            sleep(interval)

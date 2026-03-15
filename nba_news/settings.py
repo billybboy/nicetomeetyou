@@ -78,10 +78,13 @@ WSGI_APPLICATION = "nba_news.wsgi.application"
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
 DATABASES = {
-    "default": env.db("DATABASE_URL", default="sqlite:///db.sqlite3"),
+    "default": env.db(
+        "DATABASE_URL",
+        default="postgres://postgres:password@127.0.0.1:5432/nba_news",
+    ),
 }
 CACHES = {
-    "default": env.cache("CACHE_URL"),
+    "default": env.cache("CACHE_URL", default="redis://127.0.0.1:6379/1"),
 }
 
 
