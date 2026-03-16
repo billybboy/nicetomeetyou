@@ -13,6 +13,16 @@ NEWS_LIST_CACHE_KEY = "news:list"
 NEWS_LIST_CACHE_TIMEOUT = 60
 
 
+def serialize_news_list_item(news: News, request=None) -> dict:
+    """Serialize one news item into the list-page payload shape."""
+
+    serializer = NewsListSerializer(
+        news,
+        context={"request": request} if request is not None else {},
+    )
+    return serializer.data
+
+
 class NewsListPageView(TemplateView):
     """Shell page for the AJAX-driven news list."""
 

@@ -6,7 +6,7 @@ services:
     working_dir: /app
     command: >
       sh -c "python manage.py migrate &&
-      gunicorn nba_news.wsgi:application --bind 0.0.0.0:8000 --workers 3"
+      gunicorn nba_news.asgi:application --bind 0.0.0.0:8000 --workers 3 -k uvicorn.workers.UvicornWorker"
     env_file:
       - .env
     volumes:

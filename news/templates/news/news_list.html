@@ -243,7 +243,9 @@
     </div>
   </header>
   <main>
-
+    <section class="hero">
+      <h1>NBA新聞列表</h1>
+    </section>
     <section id="news-list" class="grid" aria-live="polite"></section>
   </main>
   <script>
@@ -268,7 +270,7 @@
         ? `<img class="thumb" src="${item.image_url}" alt="${item.title}">`
         : `<div class="thumb"></div>`;
       return `
-        <a class="card" href="/news/${item.id}/">
+        <a class="card" href="/news/${item.id}/" data-news-id="${item.id}">
           ${image}
           <div class="body">
             <div class="meta">
@@ -281,6 +283,41 @@
           </div>
         </a>
       `;
+    }
+
+    function upsertCard(item) {
+      const existingCard = listNode.querySelector(`[data-news-id="${item.id}"]`);
+      const markup = renderCard(item);
+
+      if (existingCard) {
+        existingCard.outerHTML = markup;
+        return;
+      }
+
+      listNode.insertAdjacentHTML("afterbegin", markup);
+    }
+
+    function connectNewsSocket() {
+      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+      const socket = new WebSocket(`${protocol}://${window.location.host}/ws/news/`);
+
+      socket.addEventListener("open", () => {
+        statusNode.textContent = "Live Updates Connected";
+      });
+
+      socket.addEventListener("message", (event) => {
+        const payload = JSON.parse(event.data);
+        if (payload.type !== "news.created") {
+          return;
+        }
+        upsertCard(payload.item);
+        statusNode.textContent = "New Story Received";
+      });
+
+      socket.addEventListener("close", () => {
+        statusNode.textContent = "Live Updates Reconnecting";
+        window.setTimeout(connectNewsSocket, 3000);
+      });
     }
 
     async function loadNews() {
@@ -303,6 +340,7 @@
     }
 
     loadNews();
+    connectNewsSocket();
   </script>
 </body>
 </html>

@@ -7,13 +7,17 @@ from datetime import datetime
 from time import sleep
 
 import requests
+from asgiref.sync import async_to_sync
 from bs4 import BeautifulSoup, Tag
+from channels.layers import get_channel_layer
 from django.core.cache import cache
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils.dateparse import parse_datetime
 
+from news.consumers import NEWS_UPDATES_GROUP
 from news.models import News, NewsTag
+from news.views import NEWS_LIST_CACHE_KEY, serialize_news_list_item
 
 BASE_URL = "http://tw-nba.udn.com/nba/index"
 DEFAULT_TIMEOUT = 15
@@ -22,7 +26,6 @@ USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
 )
-NEWS_LIST_CACHE_KEY = "news:list"
 
 
 @dataclass
@@ -211,6 +214,22 @@ def scrape_article_detail(
     return detail, get_article_tags(soup)
 
 
+def broadcast_news_created(news: News) -> None:
+    """Push a newly created news item to websocket subscribers."""
+
+    channel_layer = get_channel_layer()
+    if channel_layer is None:
+        return
+
+    async_to_sync(channel_layer.group_send)(
+        NEWS_UPDATES_GROUP,
+        {
+            "type": "news_created",
+            "item": serialize_news_list_item(news),
+        },
+    )
+
+
 class Command(BaseCommand):
     """Persist scraped UDN NBA news list entries into `News` and `NewsTag`."""
 
@@ -281,6 +300,12 @@ class Command(BaseCommand):
                 for tag_name in tag_names:
                     tag, _ = NewsTag.objects.get_or_create(name=tag_name)
                     news.news_tag.add(tag)
+                if created:
+                    transaction.on_commit(
+                        lambda news_id=news.pk: broadcast_news_created(
+                            News.objects.prefetch_related("news_tag").get(pk=news_id)
+                        )
+                    )
 
             if created:
                 created_count += 1

@@ -14,3 +14,9 @@ CACHES = {
         "LOCATION": "news-tests",
     }
 }
+
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer",
+    }
+}
