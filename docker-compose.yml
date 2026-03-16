@@ -25,8 +25,7 @@ services:
       dockerfile: Dockerfile
     working_dir: /app
     command: >
-      sh -c "python manage.py migrate &&
-      python manage.py scrape_news --interval 300"
+      sh -c "python manage.py scrape_news --interval 300"
     env_file:
       - .env
     volumes:
