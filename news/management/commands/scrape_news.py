@@ -19,6 +19,7 @@ from django.utils.dateparse import parse_datetime
 from news.consumers import NEWS_UPDATES_GROUP
 from news.models import News, NewsTag
 from news.views import (
+    NEWS_DETAIL_CACHE_KEY,
     NEWS_LIST_CACHE_VERSION_KEY,
     serialize_news_list_item,
 )
@@ -454,6 +455,11 @@ class Command(BaseCommand):
                             News.objects.prefetch_related("news_tag").get(pk=news_id)
                         )
                     )
+                transaction.on_commit(
+                    lambda news_id=news.pk: cache.delete(
+                        f"{NEWS_DETAIL_CACHE_KEY}:{news_id}"
+                    )
+                )
 
             if created:
                 created_count += 1

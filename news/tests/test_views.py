@@ -102,3 +102,18 @@ def test_news_detail_api_returns_full_news(client, news_item: News) -> None:
     assert payload["title"] == news_item.title
     assert payload["content"] == news_item.content
     assert payload["tags"] == ["NBA"]
+
+
+@pytest.mark.django_db
+def test_news_detail_api_uses_cache_aside(client, news_item: News) -> None:
+    news_id = news_item.pk
+    first_response = client.get(reverse("news:detail-api", args=[news_id]))
+
+    assert first_response.status_code == 200
+    news_item.delete()
+
+    second_response = client.get(reverse("news:detail-api", args=[news_id]))
+
+    assert second_response.status_code == 200
+    payload = second_response.json()
+    assert payload["title"] == "Test headline"

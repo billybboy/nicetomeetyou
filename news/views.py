@@ -12,6 +12,8 @@ NEWS_LIST_CACHE_KEY = "news:list"
 NEWS_LIST_CACHE_TIMEOUT = 60
 NEWS_LIST_PAGE_SIZE = 20
 NEWS_LIST_CACHE_VERSION_KEY = "news:list:version"
+NEWS_DETAIL_CACHE_KEY = "news:detail"
+NEWS_DETAIL_CACHE_TIMEOUT = 60
 
 
 def get_news_list_cache_version() -> int:
@@ -28,6 +30,16 @@ def serialize_news_list_item(news: News, request=None) -> dict:
     """Serialize one news item into the list-page payload shape."""
 
     serializer = NewsListSerializer(
+        news,
+        context={"request": request} if request is not None else {},
+    )
+    return serializer.data
+
+
+def serialize_news_detail_item(news: News, request=None) -> dict:
+    """Serialize one news item into the detail-page payload shape."""
+
+    serializer = NewsDetailSerializer(
         news,
         context={"request": request} if request is not None else {},
     )
@@ -85,3 +97,18 @@ class NewsDetailApiView(generics.RetrieveAPIView):
 
     queryset = News.objects.prefetch_related("news_tag").all()
     serializer_class = NewsDetailSerializer
+
+    def retrieve(self, request, *args, **kwargs):
+        news_id = kwargs["pk"]
+        cache_key = f"{NEWS_DETAIL_CACHE_KEY}:{news_id}"
+        cached_payload = cache.get(cache_key)
+        if cached_payload is not None:
+            return Response(json.loads(cached_payload), status=status.HTTP_200_OK)
+
+        response = super().retrieve(request, *args, **kwargs)
+        cache.set(
+            cache_key,
+            json.dumps(response.data, ensure_ascii=False),
+            timeout=NEWS_DETAIL_CACHE_TIMEOUT,
+        )
+        return response
