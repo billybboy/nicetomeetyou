@@ -13,7 +13,6 @@ class NewsListSerializer(serializers.ModelSerializer):
         slug_field="name",
     )
     detail_url = serializers.SerializerMethodField()
-    excerpt = serializers.SerializerMethodField()
 
     class Meta:
         model = News
@@ -21,11 +20,9 @@ class NewsListSerializer(serializers.ModelSerializer):
             "id",
             "title",
             "author",
-            "caption",
             "image_url",
             "published_at",
             "detail_url",
-            "excerpt",
             "tags",
         )
 
@@ -35,9 +32,6 @@ class NewsListSerializer(serializers.ModelSerializer):
         if request is None:
             return relative_url
         return request.build_absolute_uri(relative_url)
-
-    def get_excerpt(self, obj: News) -> str:
-        return obj.content[:160].strip()
 
 
 class NewsDetailSerializer(serializers.ModelSerializer):
@@ -56,7 +50,6 @@ class NewsDetailSerializer(serializers.ModelSerializer):
             "id",
             "title",
             "author",
-            "caption",
             "content",
             "source_url",
             "image_url",

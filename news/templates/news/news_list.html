@@ -106,35 +106,9 @@
     main {
       padding: 28px 20px 56px;
     }
-    .hero {
-      margin-bottom: 28px;
-      padding: 0;
-      color: #1a1a1a;
-    }
-    h1 {
-      margin: 0 0 8px;
-      font-size: clamp(1.8rem, 4vw, 2.8rem);
-      font-weight: 800;
-      letter-spacing: 0.02em;
-    }
-    .subhead {
-      margin: 0;
-      max-width: 720px;
-      color: #4b5563;
-      font-size: 0.98rem;
-      line-height: 1.6;
-    }
-    .status {
-      margin: 0 0 6px;
-      color: #6b7280;
-      font-size: 0.82rem;
-      font-weight: 600;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-    }
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 20px;
     }
     .card {
@@ -176,12 +150,6 @@
       line-height: 1.25;
       font-weight: 800;
     }
-    .excerpt {
-      margin: 0 0 14px;
-      color: var(--muted);
-      line-height: 1.7;
-      font-size: 0.98rem;
-    }
     .tags {
       display: flex;
       flex-wrap: wrap;
@@ -202,9 +170,38 @@
       color: var(--muted);
       text-align: center;
     }
+    .pagination {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      margin-top: 28px;
+    }
+    .pagination button {
+      min-width: 110px;
+      padding: 10px 14px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--ink);
+      font: inherit;
+      cursor: pointer;
+    }
+    .pagination button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    .page-label {
+      min-width: 120px;
+      text-align: center;
+      color: var(--muted);
+      font-weight: 700;
+    }
     @media (max-width: 920px) {
       .nav-inner {
         grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+      .grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
       }
     }
     @media (max-width: 640px) {
@@ -225,9 +222,6 @@
       .nav-inner {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
-      .hero {
-        padding: 18px;
-      }
       .grid {
         grid-template-columns: 1fr;
       }
@@ -243,14 +237,42 @@
     </div>
   </header>
   <main>
-    <section class="hero">
-      <h1>NBA新聞列表</h1>
-    </section>
     <section id="news-list" class="grid" aria-live="polite"></section>
+    <nav class="pagination" aria-label="新聞分頁">
+      <button id="prev-page" type="button">上一頁</button>
+      <span id="page-label" class="page-label">第 1 頁</span>
+      <button id="next-page" type="button">下一頁</button>
+    </nav>
   </main>
   <script>
-    const statusNode = document.getElementById("status");
     const listNode = document.getElementById("news-list");
+    const prevPageButton = document.getElementById("prev-page");
+    const nextPageButton = document.getElementById("next-page");
+    const pageLabelNode = document.getElementById("page-label");
+    const pageSize = 20;
+    let currentPage = 1;
+    let totalPages = 1;
+    let totalItems = 0;
+
+    function getPageFromLocation() {
+      const params = new URLSearchParams(window.location.search);
+      const page = Number.parseInt(params.get("page") || "1", 10);
+      return Number.isNaN(page) || page < 1 ? 1 : page;
+    }
+
+    function updateUrl(page) {
+      const url = new URL(window.location.href);
+      url.searchParams.set("page", String(page));
+      window.history.replaceState({}, "", url);
+    }
+
+    function updatePagination(count) {
+      totalItems = count || 0;
+      totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+      pageLabelNode.textContent = `第 ${currentPage} 頁 / 共 ${totalPages} 頁`;
+      prevPageButton.disabled = currentPage <= 1;
+      nextPageButton.disabled = currentPage >= totalPages;
+    }
 
     function formatDate(value) {
       if (!value) return "未提供時間";
@@ -278,7 +300,6 @@
               <span>${item.author || "聯合新聞網"}</span>
             </div>
             <h2 class="title">${item.title}</h2>
-            <p class="excerpt">${item.excerpt || item.caption || ""}</p>
             ${renderTags(item.tags || [])}
           </div>
         </a>
@@ -286,6 +307,10 @@
     }
 
     function upsertCard(item) {
+      if (currentPage !== 1) {
+        return;
+      }
+
       const existingCard = listNode.querySelector(`[data-news-id="${item.id}"]`);
       const markup = renderCard(item);
 
@@ -295,15 +320,15 @@
       }
 
       listNode.insertAdjacentHTML("afterbegin", markup);
+      updatePagination(totalItems + 1);
+      while (listNode.children.length > pageSize) {
+        listNode.lastElementChild?.remove();
+      }
     }
 
     function connectNewsSocket() {
       const protocol = window.location.protocol === "https:" ? "wss" : "ws";
       const socket = new WebSocket(`${protocol}://${window.location.host}/ws/news/`);
-
-      socket.addEventListener("open", () => {
-        statusNode.textContent = "Live Updates Connected";
-      });
 
       socket.addEventListener("message", (event) => {
         const payload = JSON.parse(event.data);
@@ -311,22 +336,26 @@
           return;
         }
         upsertCard(payload.item);
-        statusNode.textContent = "New Story Received";
       });
 
       socket.addEventListener("close", () => {
-        statusNode.textContent = "Live Updates Reconnecting";
         window.setTimeout(connectNewsSocket, 3000);
       });
     }
 
-    async function loadNews() {
+    async function loadNews(page = 1) {
       try {
-        const response = await fetch("/api/news/");
+        currentPage = page;
+        updateUrl(page);
+
+        const response = await fetch(`/api/news/?page=${page}`);
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
-        const items = await response.json();
+        const payload = await response.json();
+        const items = payload.results || [];
+        updatePagination(payload.count || 0);
+
         if (!items.length) {
           listNode.innerHTML = '<div class="empty">目前沒有可顯示的新聞。</div>';
           return;
@@ -334,12 +363,23 @@
 
         listNode.innerHTML = items.map(renderCard).join("");
       } catch (error) {
-        statusNode.textContent = "載入失敗";
         listNode.innerHTML = `<div class="empty">無法取得新聞資料：${error.message}</div>`;
       }
     }
 
-    loadNews();
+    prevPageButton.addEventListener("click", () => {
+      if (currentPage > 1) {
+        loadNews(currentPage - 1);
+      }
+    });
+
+    nextPageButton.addEventListener("click", () => {
+      if (currentPage < totalPages) {
+        loadNews(currentPage + 1);
+      }
+    });
+
+    loadNews(getPageFromLocation());
     connectNewsSocket();
   </script>
 </body>

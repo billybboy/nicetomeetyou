@@ -4,8 +4,7 @@ from django.db import models
 class News(models.Model):
     title = models.CharField(max_length=500)
     author = models.CharField(max_length=500, blank=True)
-    content = models.TextField()
-    caption = models.CharField(max_length=500, blank=True)
+    content = models.JSONField(default=list, blank=True)
     source_url = models.URLField(unique=True)
     image_url = models.URLField(blank=True)
     news_tag = models.ManyToManyField("NewsTag", related_name="news_items", blank=True)

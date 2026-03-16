@@ -60,12 +60,38 @@
       object-fit: cover;
       background: #d8ddd8;
     }
-    .caption {
+    .content {
+      display: grid;
+      gap: 22px;
+      margin-top: 20px;
+    }
+    .content-text {
+      margin: 0;
+      line-height: 1.9;
+      font-size: 1.06rem;
+      white-space: pre-line;
+    }
+    .content-figure {
+      margin: 0;
+    }
+    .content-image {
+      width: 100%;
+      display: block;
+      border: 1px solid var(--line);
+      background: #d8ddd8;
+    }
+    .content-caption {
+      margin: 10px auto 0;
       max-width: 70%;
-      margin: 0 auto 20px;
       color: var(--muted);
-      font-size: 0.92rem;
       text-align: center;
+      font-size: 0.92rem;
+    }
+    .content-embed {
+      display: block;
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 600;
     }
     .tags {
       display: flex;
@@ -78,11 +104,6 @@
       background: var(--tag);
       border-radius: 999px;
       font-size: 0.82rem;
-    }
-    .content {
-      line-height: 1.9;
-      font-size: 1.06rem;
-      white-space: pre-line;
     }
     .source {
       margin-top: 24px;
@@ -117,21 +138,55 @@
       return `<div class="tags">${tags.map((tag) => `<span class="tag">${tag}</span>`).join("")}</div>`;
     }
 
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+    }
+
+    function renderContentBlock(block) {
+      if (block.type === "text") {
+        return `<p class="content-text">${escapeHtml(block.value || "")}</p>`;
+      }
+
+      if (block.type === "image") {
+        const caption = block.caption
+          ? `<figcaption class="content-caption">${escapeHtml(block.caption)}</figcaption>`
+          : "";
+        return `
+          <figure class="content-figure">
+            <img class="content-image" src="${escapeHtml(block.url || "")}" alt="${escapeHtml(block.caption || "新聞圖片")}">
+            ${caption}
+          </figure>
+        `;
+      }
+
+      if (block.type === "tweet") {
+        return `<a class="content-embed" href="${escapeHtml(block.url || "")}" target="_blank" rel="noreferrer">查看 X / Twitter 內容</a>`;
+      }
+
+      if (block.type === "video") {
+        return `<a class="content-embed" href="${escapeHtml(block.url || "")}" target="_blank" rel="noreferrer">查看影片內容</a>`;
+      }
+
+      return "";
+    }
+
     function renderDetail(item) {
-      const hero = item.image_url
-        ? `<img class="hero" src="${item.image_url}" alt="${item.title}">`
+      const content = Array.isArray(item.content)
+        ? item.content.map(renderContentBlock).join("")
         : "";
-      const caption = item.caption ? `<p class="caption">${item.caption}</p>` : "";
       return `
         <h1>${item.title}</h1>
         <div class="meta">
           <span>${formatDate(item.published_at)}</span>
           <span>${item.author || "聯合新聞網"}</span>
         </div>
-        ${hero}
-        ${caption}
         ${renderTags(item.tags || [])}
-        <div class="content">${item.content || ""}</div>
+        <div class="content">${content}</div>
         <p class="source"><a href="${item.source_url}" target="_blank" rel="noreferrer">查看原始新聞</a></p>
       `;
     }

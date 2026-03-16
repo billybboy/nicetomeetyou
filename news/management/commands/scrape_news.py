@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from time import sleep
+from urllib.parse import urljoin
 
 import requests
 from asgiref.sync import async_to_sync
@@ -17,7 +18,10 @@ from django.utils.dateparse import parse_datetime
 
 from news.consumers import NEWS_UPDATES_GROUP
 from news.models import News, NewsTag
-from news.views import NEWS_LIST_CACHE_KEY, serialize_news_list_item
+from news.views import (
+    NEWS_LIST_CACHE_VERSION_KEY,
+    serialize_news_list_item,
+)
 
 BASE_URL = "http://tw-nba.udn.com/nba/index"
 DEFAULT_TIMEOUT = 15
@@ -60,6 +64,15 @@ def fetch_html(url: str, timeout: int) -> str:
     return response.text
 
 
+def normalize_url(value: str | None, base_url: str) -> str:
+    """Return an absolute URL for scraped assets and links."""
+
+    normalized = normalize_text(value)
+    if not normalized:
+        return ""
+    return urljoin(base_url, normalized)
+
+
 def extract_items(container: Tag) -> list[NewsItem]:
     """Convert list-page entries into normalized `NewsItem` records."""
 
@@ -90,18 +103,6 @@ def scrape_news_list_page(html: str) -> list[NewsItem]:
     return []
 
 
-def get_caption(soup: BeautifulSoup) -> str:
-    """Return the first non-empty text match from a selector sequence."""
-
-    node = soup.select_one("figcaption")
-    if not isinstance(node, Tag):
-        return ""
-    text = normalize_text(node.get_text(" ", strip=True).lstrip("/").strip())
-    if text:
-        return text
-    return ""
-
-
 def get_author(soup: BeautifulSoup) -> str:
     """Return the first non-empty text match from a selector sequence."""
 
@@ -117,25 +118,173 @@ def get_author(soup: BeautifulSoup) -> str:
     return ""
 
 
-def get_article_content(soup: BeautifulSoup, fallback: str = "") -> str:
-    """Extract article body text from the detail page."""
+def get_figure_blocks(node: Tag, base_url: str) -> list[dict]:
+    """Extract ordered image blocks from a figure-bearing node."""
 
-    paragraphs: list[str] = []
+    blocks: list[dict] = []
+    for figure in node.find_all("figure"):
+        if not isinstance(figure, Tag):
+            continue
 
-    nodes = soup.select("#story_body_content p")
-    for node in nodes:
+        image = figure.find("img")
+        if not isinstance(image, Tag):
+            continue
+
+        image_url = normalize_url(
+            image.get("src") or image.get("data-src") or image.get("data-original"),
+            base_url,
+        )
+        if not image_url:
+            continue
+
+        caption = ""
+        figcaption = figure.find("figcaption")
+        if isinstance(figcaption, Tag):
+            caption = normalize_text(figcaption.get_text(" ", strip=True))
+
+        blocks.append(
+            {
+                "type": "image",
+                "url": image_url,
+                "caption": caption,
+            }
+        )
+    return blocks
+
+
+def get_video_block(node: Tag, base_url: str) -> dict | None:
+    """Extract a video block from iframe-based embeds."""
+
+    iframe = node.find("iframe")
+    if not isinstance(iframe, Tag):
+        return None
+
+    video_url = normalize_url(iframe.get("src"), base_url)
+    if not video_url:
+        return None
+
+    return {
+        "type": "video",
+        "url": video_url,
+    }
+
+
+def get_tweet_block(node: Tag, base_url: str) -> dict | None:
+    """Extract a tweet block from embedded tweet markup."""
+
+    tweet_url = ""
+
+    blockquote = node.find("blockquote")
+    if isinstance(blockquote, Tag) and "twitter" in " ".join(
+        blockquote.get("class", [])
+    ):
+        anchor = blockquote.find("a", href=True)
+        if isinstance(anchor, Tag):
+            tweet_url = normalize_url(anchor.get("href"), base_url)
+
+    if not tweet_url:
+        anchor = node.find("a", href=True)
+        if isinstance(anchor, Tag):
+            href = normalize_url(anchor.get("href"), base_url)
+            if "twitter.com" in href or "x.com" in href:
+                tweet_url = href
+
+    if not tweet_url:
+        return None
+
+    return {
+        "type": "tweet",
+        "url": tweet_url,
+    }
+
+
+def get_text_block(node: Tag) -> dict | None:
+    """Extract a normalized text block from a content node."""
+
+    text = normalize_text(node.get_text(" ", strip=True))
+    if not text or len(text) <= 1:
+        return None
+
+    return {
+        "type": "text",
+        "value": text,
+    }
+
+
+def is_utility_node(node: Tag) -> bool:
+    """Return whether a node is metadata, ads, or non-content utility markup."""
+
+    classes = set(node.get("class", []))
+    if classes.intersection({"shareBar", "only_web", "only_mobile", "inbox-ad", "inline-ad"}):
+        return True
+
+    node_id = node.get("id", "")
+    if node_id in {"shareBar", "story_end", "google_ad", "underlay-checkpoint"}:
+        return True
+
+    if node.name in {"h1", "script", "style"}:
+        return True
+
+    return False
+
+
+def get_body_nodes(container: Tag) -> list[Tag]:
+    """Return the ordered body nodes from the article content wrapper."""
+
+    content_root = container.select_one(":scope > span")
+    if not isinstance(content_root, Tag):
+        content_root = container
+
+    body_nodes: list[Tag] = []
+    for node in content_root.children:
         if not isinstance(node, Tag):
             continue
-        if node.find("figure"):
+        if is_utility_node(node):
             continue
-        text = normalize_text(node.get_text(" ", strip=True))
-        if text and len(text) > 1:
-            paragraphs.append(text)
+        body_nodes.append(node)
+    return body_nodes
 
-    if paragraphs:
-        return "\n\n".join(dict.fromkeys(paragraphs))
 
-    return fallback
+def get_article_content(
+    soup: BeautifulSoup, fallback: str = "", base_url: str = BASE_URL
+) -> list[dict]:
+    """Extract the detail page body as an ordered list of structured blocks."""
+
+    container = soup.select_one("#story_body_content")
+    if not isinstance(container, Tag):
+        return [{"type": "text", "value": fallback}] if fallback else []
+
+    blocks: list[dict] = []
+    for node in get_body_nodes(container):
+
+        if node.find("figure") and not node.find("img"):
+            continue
+
+        image_blocks = get_figure_blocks(node, base_url)
+        if image_blocks:
+            blocks.extend(image_blocks)
+            continue
+
+        tweet_block = get_tweet_block(node, base_url)
+        if tweet_block is not None:
+            blocks.append(tweet_block)
+            continue
+
+        video_block = get_video_block(node, base_url)
+        if video_block is not None:
+            blocks.append(video_block)
+            continue
+
+        text_block = get_text_block(node)
+        if text_block is not None:
+            if text_block["value"] == "twitter loading...":
+                continue
+            blocks.append(text_block)
+
+    if blocks:
+        return blocks
+
+    return [{"type": "text", "value": fallback}] if fallback else []
 
 
 def parse_published_at(value: str) -> datetime | None:
@@ -205,8 +354,7 @@ def scrape_article_detail(
     detail = {
         "title": item.title,
         "author": get_author(soup),
-        "content": get_article_content(soup, fallback=item.title),
-        "caption": get_caption(soup),
+        "content": get_article_content(soup, fallback=item.title, base_url=item.url),
         "source_url": get_meta_content(soup, "meta[property='og:url']") or item.url,
         "image_url": get_meta_content(soup, "meta[property='og:image']"),
         "published_at": get_published_at(soup),
@@ -317,7 +465,10 @@ class Command(BaseCommand):
                 self.stdout.write(f"Updated: {news.title}")
 
         if changed:
-            cache.delete(NEWS_LIST_CACHE_KEY)
+            try:
+                cache.incr(NEWS_LIST_CACHE_VERSION_KEY)
+            except ValueError:
+                cache.set(NEWS_LIST_CACHE_VERSION_KEY, 2, timeout=None)
 
         return created_count, updated_count, error_count
 
